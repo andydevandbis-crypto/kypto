@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Krypto Bot Simulator</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.0/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0a1a; color: #eee; padding: 20px; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 30px; color: #00ff88; font-size: 2.5em; text-shadow: 0 0 30px rgba(0, 255, 136, 0.3); }
+        
+        .status-bar { background: #1a1a3e; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #2a2a5e; }
+        .status-indicator { display: flex; align-items: center; gap: 10px; }
+        .status-dot { width: 12px; height: 12px; border-radius: 50%; background: #ff4444; transition: background 0.3s; }
+        .status-dot.active { background: #00ff88; box-shadow: 0 0 20px rgba(0, 255, 136, 0.5); }
+        .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+        
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; font-size: 1em; font-weight: bold; cursor: pointer; transition: all 0.3s; text-transform: uppercase; letter-spacing: 1px; }
+        .btn-start { background: #00ff88; color: #0a0a1a; }
+        .btn-start:hover { background: #00cc66; transform: scale(1.05); }
+        .btn-stop { background: #ff4444; color: white; }
+        .btn-stop:hover { background: #cc3333; transform: scale(1.05); }
+        .btn-reset { background: #4444ff; color: white; }
+        .btn-reset:hover { background: #3333cc; transform: scale(1.05); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+        
+        .dashboard { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .card { background: #1a1a3e; padding: 20px; border-radius: 15px; border: 1px solid #2a2a5e; }
+        .card h3 { color: #00ff88; margin-bottom: 15px; }
+        
+        .chart-container { height: 300px; position: relative; }
+        .progress-bar { width: 100%; height: 4px; background: #0a0a2e; border-radius: 2px; margin-top: 10px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #00ff88, #00ccff); width: 0%; transition: width 0.5s ease; }
+        
+        .coin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-height: 400px; overflow-y: auto; }
+        .coin-grid::-webkit-scrollbar { width: 6px; }
+        .coin-grid::-webkit-scrollbar-track { background: #0a0a2e; border-radius: 10px; }
+        .coin-grid::-webkit-scrollbar-thumb { background: #00ff88; border-radius: 10px; }
+        
+        .coin-card { background: #0a0a2e; padding: 12px; border-radius: 8px; border-left: 3px solid #444; }
+        .coin-card .coin-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .coin-card .coin-name { font-weight: bold; }
+        .coin-card .coin-price { font-size: 1.1em; color: #00ff88; }
+        .coin-card .coin-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 0.85em; color: #888; }
+        .coin-card .signal-badge { padding: 2px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
+        .signal-badge.buy { background: rgba(0, 255, 136, 0.2); color: #00ff88; }
+        .signal-badge.sell { background: rgba(255, 68, 68, 0.2); color: #ff4444; }
+        .signal-badge.hold { background: rgba(255, 255, 255, 0.1); color: #888; }
+        
+        .total-value { font-size: 2em; color: #00ff88; text-align: center; margin: 10px 0; }
+        .total-return { text-align: center; font-size: 1.2em; }
+        .total-return.positive { color: #00ff88; }
+        .total-return.negative { color: #ff4444; }
+        
+        .trades-container { max-height: 250px; overflow-y: auto; margin-top: 10px; }
+        .trades-container::-webkit-scrollbar { width: 6px; }
+        .trades-container::-webkit-scrollbar-track { background: #0a0a2e; border-radius: 10px; }
+        .trades-container::-webkit-scrollbar-thumb { background: #00ff88; border-radius: 10px; }
+        .trade-item { display: flex; justify-content: space-between; padding: 6px 10px; margin-bottom: 3px; border-radius: 4px; background: #0a0a2e; font-size: 0.85em; animation: slideIn 0.3s ease; }
+        .trade-item.buy { border-left: 2px solid #00ff88; }
+        .trade-item.sell { border-left: 2px solid #ff4444; }
+        
+        @keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+        @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } .coin-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Multi-Krypto Bot</h1>
+        
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Väntar på start</span>
+            </div>
+            <div class="controls">
+                <button class="btn btn-start" id="startBtn" onclick="startSimulation()">▶ Starta</button>
+                <button class="btn btn-stop" id="stopBtn" onclick="stopSimulation()" disabled>⏹ Stoppa</button>
+                <button class="btn btn-reset" id="resetBtn" onclick="resetSimulation()" disabled>↺ Återställ</button>
+            </div>
+        </div>
+        
+        <div class="dashboard">
+            <div class="card">
+                <h3>📈 Total Portfölj</h3>
+                <div class="total-value" id="totalValue">$10,000.00</div>
+                <div class="total-return" id="totalReturn">0.00%</div>
+                <div class="chart-container">
+                    <canvas id="portfolioChart"></canvas>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div id="statusText2" style="text-align: center; color: #888; margin-top: 10px;"></div>
+            </div>
+            
+            <div class="card">
+                <h3>📊 Valutor</h3>
+                <div class="coin-grid" id="coinGrid">
+                    <!-- Fylls dynamiskt -->
+                </div>
+                
+                <h3 style="margin-top: 15px;">📝 Senaste Trades</h3>
+                <div class="trades-container" id="tradesList">
+                    <div style="text-align: center; color: #888; padding: 10px;">Väntar på affärer...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const socket = io();
+        let chart = null;
+        let chartData = [];
+        let totalTrades = 0;
+        
+        // Initiera chart
+        const ctx = document.getElementById('portfolioChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Portföljvärde (USD)',
+                    data: [],
+                    borderColor: '#00ff88',
+                    backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#888' } } },
+                scales: {
+                    x: { ticks: { color: '#666', maxTicksLimit: 15 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: { ticks: { color: '#666' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
+        
+        // Färger för olika valutor
+        const coinColors = {
+            'bitcoin': '#f7931a',
+            'ethereum': '#627eea',
+            'solana': '#9945ff'
+        };
+        
+        const coinSymbols = {
+            'bitcoin': 'BTC',
+            'ethereum': 'ETH',
+            'solana': 'SOL'
+        };
+        
+        // WebSocket-hantering
+        socket.on('connect', function() {
+            document.getElementById('statusText').textContent = 'Ansluten!';
+        });
+        
+        socket.on('multi_price_update', function(data) {
+            const updates = data.updates;
+            const totalValue = data.total_value;
+            const progress = data.progress;
+            
+            // Uppdatera totalt värde
+            document.getElementById('totalValue').textContent = `$${totalValue.toFixed(2)}`;
+            const returnPercent = ((totalValue - 10000) / 10000) * 100;
+            const returnEl = document.getElementById('totalReturn');
+            returnEl.textContent = `${returnPercent.toFixed(2)}%`;
+            returnEl.className = `total-return ${returnPercent >= 0 ? 'positive' : 'negative'}`;
+            
+            // Uppdatera progress
+            document.getElementById('progressFill').style.width = progress + '%';
+            document.getElementById('statusText2').textContent = `Dag ${data.day} av ${data.total_days}`;
+            
+            // Uppdatera chart
+            chartData.push(totalValue);
+            chart.data.labels.push(data.day);
+            if (chartData.length > 100) {
+                chartData.shift();
+                chart.data.labels.shift();
+            }
+            chart.data.datasets[0].data = chartData;
+            chart.update();
+            
+            // Uppdatera coin-kort
+            const coinGrid = document.getElementById('coinGrid');
+            coinGrid.innerHTML = '';
+            
+            for (const [symbol, update] of Object.entries(updates)) {
+                const portfolio = update.portfolio;
+                const signal = update.signal;
+                const price = update.price;
+                const name = symbol.charAt(0).toUpperCase() + symbol.slice(1);
+                
+                const card = document.createElement('div');
+                card.className = 'coin-card';
+                card.style.borderLeftColor = coinColors[symbol] || '#444';
+                
+                const signalClass = signal.toLowerCase();
+                const signalText = signal === 'BUY' ? '🟢 KÖP' : signal === 'SELL' ? '🔴 SÄLJ' : '⏸ HOLD';
+                
+                card.innerHTML = `
+                    <div class="coin-header">
+                        <span class="coin-name">${name} (${coinSymbols[symbol]})</span>
+                        <span class="signal-badge ${signalClass}">${signalText}</span>
+                    </div>
+                    <div class="coin-price">$${price.toFixed(2)}</div>
+                    <div class="coin-stats">
+                        <span>💰 ${portfolio.total_value.toFixed(2)}</span>
+                        <span>🪙 ${portfolio.holdings.toFixed(4)}</span>
+                    </div>
+                `;
+                coinGrid.appendChild(card);
+            }
+            
+            // Lägg till trades
+            const tradesList = document.getElementById('tradesList');
+            let hasTrade = false;
+            
+            for (const [symbol, update] of Object.entries(updates)) {
+                if (update.trade) {
+                    hasTrade = true;
+                    const trade = update.trade;
+                    const div = document.createElement('div');
+                    div.className = `trade-item ${trade.type.toLowerCase()}`;
+                    const name = symbol.charAt(0).toUpperCase() + symbol.slice(1);
+                    div.innerHTML = `
+                        <span>${trade.timestamp}</span>
+                        <span><strong>${name}</strong></span>
+                        <span>${trade.type}</span>
+                        <span>${trade.amount.toFixed(4)} st</span>
+                        <span>$${trade.value.toFixed(2)}</span>
+                    `;
+                    tradesList.prepend(div);
+                    totalTrades++;
+                }
+            }
+            
+            if (hasTrade) {
+                while (tradesList.children.length > 30) {
+                    tradesList.removeChild(tradesList.lastChild);
+                }
+            }
+            
+            // Uppdatera status
+            document.getElementById('statusText').textContent = 'Simulerar live...';
+            document.getElementById('statusDot').className = 'status-dot active';
+        });
+        
+        socket.on('simulation_complete', function(data) {
+            document.getElementById('statusText').textContent = '✅ Simulering klar!';
+            document.getElementById('statusDot').className = 'status-dot';
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('resetBtn').disabled = false;
+            
+            let msg = `Simulering klar!\nTotalt värde: $${data.total_value.toFixed(2)}\nAvkastning: ${((data.total_value - 10000) / 10000 * 100).toFixed(2)}%\n\nPer valuta:\n`;
+            for (const [symbol, value] of Object.entries(data.portfolios)) {
+                const name = symbol.charAt(0).toUpperCase() + symbol.slice(1);
+                const trades = data.trades[symbol] || 0;
+                msg += `${name}: $${value.toFixed(2)} (${trades} trades)\n`;
+            }
+            alert(msg);
+        });
+        
+        // Kontrollfunktioner
+        async function startSimulation() {
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('resetBtn').disabled = true;
+            document.getElementById('statusText').textContent = 'Startar...';
+            
+            try {
+                const response = await fetch('/api/start_simulation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                
+                const data = await response.json();
+                if (data.error) {
+                    alert('Fel: ' + data.error);
+                    document.getElementById('startBtn').disabled = false;
+                    return;
+                }
+                
+                document.getElementById('tradesList').innerHTML = '';
+                totalTrades = 0;
+                chartData = [];
+                chart.data.labels = [];
+                chart.data.datasets[0].data = [];
+                chart.update();
+                
+            } catch (error) {
+                alert('Fel: ' + error.message);
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+        
+        async function stopSimulation() {
+            await fetch('/api/stop_simulation', { method: 'POST' });
+            document.getElementById('statusText').textContent = 'Stoppad';
+            document.getElementById('statusDot').className = 'status-dot';
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('resetBtn').disabled = false;
+        }
+        
+        async function resetSimulation() {
+            await fetch('/api/reset_simulation', { method: 'POST' });
+            document.getElementById('statusText').textContent = 'Återställd';
+            document.getElementById('statusDot').className = 'status-dot';
+            document.getElementById('totalValue').textContent = '$10,000.00';
+            document.getElementById('totalReturn').textContent = '0.00%';
+            document.getElementById('totalReturn').className = 'total-return';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('statusText2').textContent = '';
+            document.getElementById('coinGrid').innerHTML = '';
+            document.getElementById('tradesList').innerHTML = '<div style="text-align: center; color: #888; padding: 10px;">Väntar på affärer...</div>';
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('resetBtn').disabled = true;
+            chartData = [];
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.update();
+        }
+    </script>
+</body>
+</html>
